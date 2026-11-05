@@ -10,6 +10,7 @@
 #include "ps2/BiosTools.h"
 #include "VMManager.h"
 #include "DEV9/ACJV.h"
+#include "DEV9/ILinkNet.h"
 
 #include <ctype.h>
 #include <fmt/format.h>
@@ -1211,6 +1212,7 @@ namespace R3000A
 		int RegisterLibraryEntries_HLE()
 		{
 			LoadFuncs(a0);
+			ILinkNet::OnRegisterLibrary(a0);
 
 			const std::string modname = iopMemReadString(a0 + 12);
 			const u32 version = iopMemRead32(a0 + 8);
@@ -1266,6 +1268,27 @@ namespace R3000A
 			return 0;
 		}
 	} // namespace thbase
+
+	// i.LINK-sockets (ILSOCK.IRX) over UDP voor System 246-linkspellen (Time Crisis 3 twin). Zie DEV9/ILinkNet.cpp.
+	namespace ilsocket
+	{
+		int sceILsockInit_HLE() { return ILinkNet::Init(); }
+		int sceILsockReset_HLE() { return ILinkNet::Reset(); }
+		int sceILsockOpen_HLE() { return ILinkNet::Open(); }
+		int sceILsockClose_HLE() { return ILinkNet::Close(); }
+		int sceILsockBind_HLE() { return ILinkNet::Bind(); }
+		int sceILsockConnect_HLE() { return ILinkNet::Connect(); }
+		int sceILsockSend_HLE() { return ILinkNet::Send(); }
+		int sceILsockSendTo_HLE() { return ILinkNet::SendTo(); }
+		int sceILsockRecv_HLE() { return ILinkNet::Recv(); }
+		int sceILsockRecvFrom_HLE() { return ILinkNet::RecvFrom(); }
+	} // namespace ilsocket
+
+	namespace ilink
+	{
+		int sce1394SbEui64_HLE() { return ILinkNet::SbEui64(); }
+		int sce1394SbNodeId_HLE() { return ILinkNet::SbNodeId(); }
+	} // namespace ilink
 
 	namespace intrman
 	{
@@ -1430,6 +1453,22 @@ namespace R3000A
 		MODULE(thbase)
 			EXPORT_H(  4, CreateThread)
 			EXPORT_H(  6, StartThread)
+		END_MODULE
+		MODULE(ilsocket)
+			EXPORT_H(  4, sceILsockInit)
+			EXPORT_H(  5, sceILsockReset)
+			EXPORT_H(  8, sceILsockOpen)
+			EXPORT_H(  9, sceILsockClose)
+			EXPORT_H( 10, sceILsockBind)
+			EXPORT_H( 11, sceILsockConnect)
+			EXPORT_H( 12, sceILsockSend)
+			EXPORT_H( 13, sceILsockSendTo)
+			EXPORT_H( 14, sceILsockRecv)
+			EXPORT_H( 15, sceILsockRecvFrom)
+		END_MODULE
+		MODULE(ilink)
+			EXPORT_H( 27, sce1394SbEui64)
+			EXPORT_H( 28, sce1394SbNodeId)
 		END_MODULE
 
 		// Special case with ioman and iomanX
