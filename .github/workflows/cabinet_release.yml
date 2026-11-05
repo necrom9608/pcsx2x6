@@ -1,0 +1,101 @@
+# Game-INN: na elke geslaagde Windows-build op master een GitHub-release maken die de TC3-kasten
+# zelf ophalen (deploy/cabinet/update-pcsx2x6.ps1). Publiek downloadbaar, geen token nodig op de kasten:
+#   https://github.com/<eigenaar>/<repo>/releases/latest/download/version.json
+#   https://github.com/<eigenaar>/<repo>/releases/latest/download/pcsx2x6.zip
+name: Kast-release (TC3-link)
+
+on:
+  workflow_run:
+    workflows: ["🖥️ Windows Builds"]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run-ID van een 'Windows Builds'-run (leeg = laatste op master)"
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: cabinet-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PREFIX: PCSX2-windows-Qt-x64-cmake-msvc
+    steps:
+      - name: Run bepalen
+        id: run
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${{ github.event.workflow_run.id }}" ]]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+          elif [[ -n "${{ inputs.run_id }}" ]]; then
+            RUN_ID="${{ inputs.run_id }}"
+          else
+            RUN_ID=$(gh run list -R "$REPO" -w "🖥️ Windows Builds" -b master -s completed -L 1 --json databaseId -q '.[0].databaseId')
+          fi
+          gh api "repos/$REPO/actions/runs/$RUN_ID" > run.json
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sha=$(jq -r .head_sha run.json)" >> "$GITHUB_OUTPUT"
+          echo "short=$(jq -r '.head_sha[0:9]' run.json)" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .html_url run.json)" >> "$GITHUB_OUTPUT"
+          { echo "title<<EOF"; jq -r .display_title run.json; echo "EOF"; } >> "$GITHUB_OUTPUT"
+          echo "Run $RUN_ID: $(jq -r '.conclusion' run.json) $(jq -r .head_sha run.json)"
+
+      - name: Artifact ophalen (CMake-build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME=$(gh api "repos/$REPO/actions/runs/${{ steps.run.outputs.id }}/artifacts?per_page=100" \
+            -q "[.artifacts[] | select((.name | startswith(\"$PREFIX-sha[\")) and (.name | endswith(\"]\")) and (.expired | not))] | first | .name")
+          if [[ -z "$NAME" || "$NAME" == null ]]; then
+            echo "::warning::Geen artifact $PREFIX in deze run — niets gepubliceerd."
+            echo "SKIP=1" >> "$GITHUB_ENV"; exit 0
+          fi
+          gh run download "${{ steps.run.outputs.id }}" -R "$REPO" -n "$NAME" -D build
+          EXE=$(find build -maxdepth 3 -iname 'pcsx2-qt*.exe' | head -1)
+          [[ -n "$EXE" ]] || { echo "::error::pcsx2-qt.exe niet gevonden"; exit 1; }
+          ROOT=$(dirname "$EXE")
+          [[ $(basename "$EXE") == pcsx2-qt.exe ]] || mv "$EXE" "$ROOT/pcsx2-qt.exe"
+          (cd "$ROOT" && zip -qr -9 "$GITHUB_WORKSPACE/pcsx2x6.zip" .)
+          ls -l pcsx2x6.zip
+
+      - name: Kastscripts ophalen
+        if: env.SKIP != '1'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.run.outputs.sha }}
+          path: src
+          sparse-checkout: deploy/cabinet
+
+      - name: Release publiceren
+        if: env.SKIP != '1'
+        shell: bash
+        env:
+          TITLE: ${{ steps.run.outputs.title }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.run.outputs.sha }}"; SHORT="${{ steps.run.outputs.short }}"; TAG="kast-$SHORT"
+          HASH=$(sha256sum pcsx2x6.zip | awk '{print $1}')
+          jq -n --arg c "$SHA" --arg v "$SHORT" --arg s "$TITLE" --arg d "$(date -Iseconds)" --arg h "$HASH" \
+            --argjson z "$(stat -c %s pcsx2x6.zip)" --arg r "${{ steps.run.outputs.url }}" \
+            '{commit:$c, version:$v, subject:$s, published:$d, sha256:$h, size:$z, run:$r}' > version.json
+          cat version.json
+          cp src/deploy/cabinet/*.ps1 . 2>/dev/null || true
+          gh release delete "$TAG" -R "$REPO" -y --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" -R "$REPO" --target "$SHA" --latest \
+            --title "Kast $SHORT — $TITLE" \
+            --notes "Automatische build voor de Game-INN-kasten (Time Crisis 3 twin-link). Bron: ${{ steps.run.outputs.url }}" \
+            pcsx2x6.zip version.json $(ls *.ps1 2>/dev/null)
+          # enkel de laatste 5 kast-releases bewaren
+          gh release list -R "$REPO" -L 100 --json tagName,createdAt -q '[.[] | select(.tagName | startswith("kast-"))] | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' \
+            | while read -r t; do gh release delete "$t" -R "$REPO" -y --cleanup-tag; echo "weg: $t"; done
