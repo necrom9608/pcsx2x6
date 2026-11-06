@@ -20,6 +20,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <mstcpip.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12) // niet altijd in mstcpip.h (o.a. met WIN32_LEAN_AND_MEAN)
+#endif
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
